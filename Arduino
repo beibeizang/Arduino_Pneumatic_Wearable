@@ -1,0 +1,115 @@
+int trigPin = 2;					//测距仪的两个输出口
+int rxPin = 3;
+
+int pinRelay1 = 5;					//气泵的两个输出口
+int pinRelay2 = 4;
+
+float preDist;
+float getDist;
+
+int timeCnt = 0;								//计时器
+
+enum State {WalkD = 0, WalkI, StandI, StandH};	//四个状态，依次为走路deflate，走路inflate，静止inflate，静止hold
+State state;									//当前状态
+
+const int stateTimeLimit = 50000;				//每一阶段的持续时间，当计时器到达持续时间后更换状态
+const int timeStep = 50;						//每次处理的花费时间步长，即计时器的增长单位
+const float walkSpeed = 0.7;					//判断是否走路的最小位移长度，单位为厘米
+
+void deflate() {
+  Serial.println("deflate");
+  digitalWrite(pinRelay2,HIGH);
+  digitalWrite(pinRelay1,HIGH);
+}
+
+void hold() {
+  Serial.println("hold");
+  digitalWrite(pinRelay1,HIGH);
+  digitalWrite(pinRelay2,LOW);
+}
+
+void inflate() {
+  Serial.println("inflate");
+  digitalWrite(pinRelay2,LOW);
+  digitalWrite(pinRelay1,LOW);
+}
+
+void setup() {
+  // put your setup code here, to run once:
+  pinMode(trigPin, OUTPUT);
+  pinMode(rxPin, INPUT);
+  pinMode(pinRelay1,OUTPUT);
+  pinMode(pinRelay2,OUTPUT);
+
+  digitalWrite(trigPin, LOW);
+  Serial.begin(9600);
+
+  preDist = -1;
+  getDist = -1;
+
+  timeCnt = 0;
+
+  state = WalkD;
+}
+
+void distSensor() {   															//测距部分                                  
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(20);
+  digitalWrite(trigPin, HIGH);  
+
+  getDist = float(pulseIn(rxPin, HIGH)) / 58.0;
+}
+
+void loop() {
+  // put your main code here, to run repeatedly:
+  distSensor();
+
+  if (timeCnt != stateTimeLimit && state != StandH) {	//如果计时器未到达阶段持续时间且当前状态不是静止hold，就跳过阶段转换
+    preDist = getDist;
+    timeCnt += timeStep;
+    return;
+  }
+
+  Serial.println(preDist);
+  Serial.println(getDist);
+  Serial.println(abs(preDist - getDist));
+
+  switch (state){										//阶段转换
+    case WalkD:											//当前状态为走路delfate
+    
+      if (abs(preDist - getDist) > walkSpeed) { 		//如果位移超过walkSpeed，那么状态转换为走路inflate，否则进入静止inflate
+        state = WalkI;
+      } else {
+        state = StandI;
+      }
+      inflate();
+      timeCnt = 0;
+      break;
+      
+    case WalkI:											//当前状态为走路inflate，则切换为走路deflate
+      state = WalkD;
+      deflate();
+      timeCnt = 0;
+      break;
+
+    case StandI:										//当前状态为静止inflate，则切换为静止hold
+      state = StandH;
+      hold();
+      timeCnt = 0;
+      break;
+      
+    case StandH:										//当前状态为静止hold
+      if (abs(preDist - getDist) > walkSpeed) 			//如果位移超过walkSpeed，那么状态转换为走路inflate，否则维持状态
+      {
+        state = WalkI;
+        inflate();
+        timeCnt = 0;
+      }
+      break;
+  }
+
+  preDist = getDist;									//更新位置，计时器增长
+  if (timeCnt < stateTimeLimit)
+    timeCnt += timeStep;
